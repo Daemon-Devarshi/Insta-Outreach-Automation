@@ -4,6 +4,75 @@ A production-ready, highly resilient, and modular Instagram automation script bu
 
 ---
 
+## 📊 Complete Automation Flow Diagram
+
+The following Mermaid diagram illustrates the lifecycle of the automation, including credentials resolution, dynamic session state checking, and manual verification bypass with system beeps:
+
+```mermaid
+graph TD
+    A[Start] --> B[Read Credentials from .env]
+    B --> C{Credentials found in .env?}
+    C -- No --> D[Prompt username/password via CLI]
+    C -- Yes --> E[Launch persistent browser instance]
+    D --> E
+    E --> F[Navigate to instagram.com]
+    F --> G{Is session already authenticated?}
+    
+    G -- Yes --> H[Read data/messages.txt]
+    G -- No --> I{Is 'Continue' button visible?}
+    
+    I -- Yes --> J[Click Continue button]
+    I -- No --> K[Click Log In Link]
+    J --> L[Wait for password input field]
+    K --> L
+    L --> M[Enter password and submit]
+    M --> N{Is login challenge / OTP / CAPTCHA triggered?}
+    
+    N -- Yes --> O{Is it an OTP/2FA code input?}
+    O -- Yes --> P[Prompt for OTP code in terminal]
+    P --> Q[Fill OTP in browser & click Confirm]
+    O -- No --> R[Display CAPTCHA alert in terminal]
+    R --> S[Trigger repeated system alert beeps]
+    S --> T[Wait up to 5 mins for manual solver]
+    Q --> U[Check log in success]
+    T --> U
+    
+    N -- No --> U
+    U --> H
+    
+    H --> V[Load first/next profile record]
+    V --> W{Is creator username already processed?}
+    W -- Yes --> X[Skip creator and proceed]
+    W -- No --> Y[Navigate directly to profile URL]
+    
+    Y --> Z{Is standard Message button visible?}
+    Z -- Yes --> AA[Click Message button]
+    Z -- No --> AB[Click three-dots button next to profile name]
+    AB --> AC[Click Send Message option from options popup]
+    AA --> AD[Wait for DM Composer to load]
+    AC --> AD
+    
+    AD --> AE{Is message input field visible?}
+    AE -- No --> AF[Focus Conversation container to activate input]
+    AF --> AG[Fill message and click Send]
+    AE -- Yes --> AG
+    
+    AG --> AH[Close DM panel]
+    AH --> AI[Mark SUCCESS in processed_profiles.json]
+    AI --> AJ{More profiles in file?}
+    
+    Y -- Action Failed --> AK[Log error details & screenshot failed page]
+    AK --> AL[Mark FAILED in processed_profiles.json]
+    AL --> AJ
+    
+    AJ -- Yes --> V
+    AJ -- No --> AM[Print batch summary & Close Browser]
+    X --> AJ
+    AM --> AN[End]
+```
+
+---
+
 ## 🌟 Solved Edge Cases & Key Features
 
 During production development, the automation has been hardened against the following common Instagram automation blockers and UI variations:
