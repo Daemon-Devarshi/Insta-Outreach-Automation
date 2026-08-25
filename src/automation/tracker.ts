@@ -137,7 +137,7 @@ export class ProfileTracker {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      
+
       const fetchRes = await client.query(
         `WITH next_batch AS (
            SELECT id FROM message_queue
@@ -152,7 +152,7 @@ export class ProfileTracker {
          RETURNING id, username, url, message, status, worker_id, error`,
         [limit, workerId]
       );
-      
+
       await client.query("COMMIT");
       return fetchRes.rows;
     } catch (err) {
