@@ -18,7 +18,7 @@ graph TD
     E --> F[Navigate to instagram.com]
     F --> G{Is session already authenticated?}
     
-    G -- Yes --> H[Read data/messages.txt]
+    G -- Yes --> H[Read data/messages.csv]
     G -- No --> I{Is 'Continue' button visible?}
     
     I -- Yes --> J[Click Continue button]
@@ -135,7 +135,7 @@ src/
 ├── input/
 │   ├── cli.ts          # Resolves CLI prompts & environment defaults
 │   ├── prompts.ts      # Inquirer CLI username / password prompt settings
-│   └── txt.ts          # Hyphen-safe messages.txt parser
+│   └── csv.ts          # RFC 4180 compliant messages.csv parser
 │
 ├── logging/
 │   ├── logger.ts       # Structured logging to logs/automation.log
@@ -168,18 +168,19 @@ HEADLESS=false
 ```
 *Note: Keeping `HEADLESS=false` is recommended so you can view manual OTP verification and CAPTCHA solving screens.*
 
-### 3. Setup Target Messages (`data/messages.txt`)
+### 3. Setup Target Messages (`data/messages.csv`)
 
-Create or update `data/messages.txt` following this format:
-```text
-username profile_url - message_to_send
+Create or update `data/messages.csv` following standard CSV format:
+```csv
+username,url,message
 ```
 **Example:**
-```text
-creator1 https://www.instagram.com/vinod_.kumar1230/ - Hi Vinod, I'd love to share something with you.
-creator2 https://www.instagram.com/kunalsrivastava658/ - Hey Kunal! I wanted to connect with you.
+```csv
+username,url,message
+creator1,https://www.instagram.com/vinod_.kumar1230/,"Hi Vinod, I'd love to share something with you."
+creator2,https://www.instagram.com/kunalsrivastava658/,"Hey Kunal! I wanted to connect with you."
 ```
-> 💡 *Note: The first occurrence of ` - ` (space-hyphen-space) is used as the split separator, so you can safely use hyphens inside your personalized message body.*
+> 💡 *Note: The CSV parser is RFC 4180 compliant. You can include commas and quotation marks inside your message by enclosing the message in double quotes (`"..."`).*
 
 ### 4. Running the Script
 

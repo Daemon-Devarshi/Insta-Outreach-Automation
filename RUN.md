@@ -36,25 +36,26 @@ npm install
 Edit or add your target Instagram profiles and personalized messages inside:
 
 ```text
-data/messages.txt
+data/messages.csv
 ```
 
 ### File Format
 
-Each line must follow this format:
+The file uses standard CSV format with headers `username,url,message`:
 
-```text
-username instagram_profile_url - message_to_send
+```csv
+username,url,message
 ```
 
-> 💡 **Note:** The separator must be ` - ` (space-hyphen-space). You can safely include hyphens inside your message text. Empty lines are ignored automatically.
+> 💡 **Note:** Standard RFC 4180 CSV rules apply. Wrap messages containing commas, quotes, or newlines in double quotes (`"..."`). Empty lines are ignored automatically.
 
-### Example `data/messages.txt`:
+### Example `data/messages.csv`:
 
-```text
-shreemayi https://www.instagram.com/shreemayireddyy/ - Hi Shreemayi, I'm Pallavi from Team Influight. We'd love to share something with you.
-creator2 https://www.instagram.com/creator2/ - Hey! I wanted to connect with you about Influight.
-creator3 https://www.instagram.com/creator3/ - Hi! I wanted to share something with you.
+```csv
+username,url,message
+shreemayi,https://www.instagram.com/shreemayireddyy/,"Hi Shreemayi, I'm Pallavi from Team Influight. We'd love to share something with you."
+creator2,https://www.instagram.com/creator2/,"Hey! I wanted to connect with you about Influight."
+creator3,https://www.instagram.com/creator3/,"Hi! I wanted to share something with you."
 ```
 
 ---
@@ -91,7 +92,7 @@ npm run dev
    - If not, it performs login.
    - If Instagram requests 2FA or verification, pause and complete it manually in the browser window.
 4. **Batch Messaging**:
-   - Opens `data/messages.txt`.
+   - Opens `data/messages.csv`.
    - Processes each profile sequentially using the **same browser instance**.
    - Opens profile → clicks Message → inputs message → clicks Send.
 5. **Completion Summary**:
@@ -119,4 +120,4 @@ npm run dev
 | :--- | :--- |
 | **Login Verification Required** | Ensure `HEADLESS=false` in `.env`. Complete any 2FA/Security Check manually in the browser. The script will proceed once authenticated. |
 | **"Message button not found"** | Verify the target profile URL is accessible and allows direct messages. Check the screenshot in `screenshots/`. |
-| **Invalid line warning** | Check line format in `data/messages.txt`. Make sure ` - ` separates the header from the message. |
+| **Invalid row warning** | Check row format in `data/messages.csv`. Ensure `username`, `url`, and `message` are non-empty and commas inside messages are enclosed in quotes. |

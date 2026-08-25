@@ -3,7 +3,7 @@ import { login } from "../auth/login";
 import { checkIsLoggedIn } from "../auth/session";
 import { executeMessageWorkflow } from "./workflow";
 import { LoginCredentials } from "../auth/auth.types";
-import { parseMessagesTxt } from "../input/txt";
+import { parseMessagesCsv } from "../input/csv";
 import { logAutomation } from "../logging/logger";
 import { captureErrorScreenshot } from "../logging/screenshots";
 import { tracker } from "./tracker";
@@ -34,15 +34,15 @@ export async function runAutomation(credentials: LoginCredentials) {
       console.log("⚠️ Could not verify session. Proceeding...");
     }
 
-    console.log("\nReading messages.txt...\n");
-    const records = parseMessagesTxt();
+    console.log("\nReading messages.csv...\n");
+    const records = parseMessagesCsv();
 
     if (records.length === 0) {
-      console.log("No profiles found in data/messages.txt.");
+      console.log("No profiles found in data/messages.csv.");
       return;
     }
 
-    console.log(`Found ${records.length} profile(s) in messages.txt.\n`);
+    console.log(`Found ${records.length} profile(s) in messages.csv.\n`);
 
     let successful = 0;
     let failed = 0;
