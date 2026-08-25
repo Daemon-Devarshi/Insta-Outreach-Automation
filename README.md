@@ -1,208 +1,209 @@
-# Instagram Outreach Automation (Modular Node.js + TypeScript + Playwright)
+# Insta Outreach Automation
 
-A production-ready, highly resilient, and modular Instagram automation script built to handle bulk direct message outreach. Using a single persistent Playwright browser instance, this script handles session reuse, CLI-based login, terminal OTP prompts, manual CAPTCHA solving alert sounds, profile options menu fallbacks, and account deduplication.
+A production-ready, distributed Instagram DM automation tool built with **Node.js**, **TypeScript**, and **Playwright**. Uses a **PostgreSQL database queue** to coordinate multiple concurrent workers — each worker claims a batch of 25 pending profiles, sends messages one-by-one, and updates the database in real time.
 
 ---
 
-## 📊 Complete Automation Flow Diagram
+## ✨ Key Features
 
-The following Mermaid diagram illustrates the lifecycle of the automation, including credentials resolution, dynamic session state checking, and manual verification bypass with system beeps:
+- 🗄️ **PostgreSQL Queue** — All targets and statuses live in the database. No CSVs, no local state files.
+- 👥 **Multi-Worker Safe** — Uses `FOR UPDATE SKIP LOCKED` transactions so multiple runners never process the same profile twice.
+- 🔄 **Crash Recovery** — Active batch is checkpointed to `data/working.json`. If the runner crashes, resuming picks up exactly where it left off.
+- 📡 **Real-time Status Updates** — Each profile is marked `SENT` or `FAILED` in the DB immediately after processing.
+- 🔁 **Fallback Message Button** — Handles profiles where the standard Message button is hidden (uses three-dots → Send message fallback).
+- 🔐 **2FA / OTP Support** — Pauses and prompts for OTP in the terminal during login challenges.
+- 🚨 **CAPTCHA Alert** — Rings audio system bell and waits up to 5 minutes for manual CAPTCHA solving.
+- 📸 **Error Screenshots** — Saves screenshots to `logs/` on failure for easy debugging.
+- 🔗 **URL-based Targeting** — Uniqueness is enforced on the profile URL. `username` is optional.
+
+---
+
+## 🗺️ Architecture Flow
 
 ```mermaid
 graph TD
-    A[Start] --> B[Read Credentials from .env]
-    B --> C{Credentials found in .env?}
-    C -- No --> D[Prompt username/password via CLI]
-    C -- Yes --> E[Launch persistent browser instance]
-    D --> E
-    E --> F[Navigate to instagram.com]
-    F --> G{Is session already authenticated?}
-    
-    G -- Yes --> H[Read data/messages.csv]
-    G -- No --> I{Is 'Continue' button visible?}
-    
-    I -- Yes --> J[Click Continue button]
-    I -- No --> K[Click Log In Link]
-    J --> L[Wait for password input field]
-    K --> L
-    L --> M[Enter password and submit]
-    M --> N{Is login challenge / OTP / CAPTCHA triggered?}
-    
-    N -- Yes --> O{Is it an OTP/2FA code input?}
-    O -- Yes --> P[Prompt for OTP code in terminal]
-    P --> Q[Fill OTP in browser & click Confirm]
-    O -- No --> R[Display CAPTCHA alert in terminal]
-    R --> S[Trigger repeated system alert beeps]
-    S --> T[Wait up to 5 mins for manual solver]
-    Q --> U[Check log in success]
-    T --> U
-    
-    N -- No --> U
-    U --> H
-    
-    H --> V[Load first/next profile record]
-    V --> W{Is creator username already processed?}
-    W -- Yes --> X[Skip creator and proceed]
-    W -- No --> Y[Navigate directly to profile URL]
-    
-    Y --> Z{Is standard Message button visible?}
-    Z -- Yes --> AA[Click Message button]
-    Z -- No --> AB[Click three-dots button next to profile name]
-    AB --> AC[Click Send Message option from options popup]
-    AA --> AD[Wait for DM Composer to load]
-    AC --> AD
-    
-    AD --> AE{Is message input field visible?}
-    AE -- No --> AF[Focus Conversation container to activate input]
-    AF --> AG[Fill message and click Send]
-    AE -- Yes --> AG
-    
-    AG --> AH[Close DM panel]
-    AH --> AI[Mark SUCCESS in processed_profiles.json]
-    AI --> AJ{More profiles in file?}
-    
-    Y -- Action Failed --> AK[Log error details & screenshot failed page]
-    AK --> AL[Mark FAILED in processed_profiles.json]
-    AL --> AJ
-    
-    AJ -- Yes --> V
-    AJ -- No --> AM[Print batch summary & Close Browser]
-    X --> AJ
-    AM --> AN[End]
+    A[Start: npm run dev] --> B[Connect to PostgreSQL]
+    B --> C[Login to Instagram]
+    C --> D{data/working.json exists?}
+    D -- Yes --> E[Resume existing batch]
+    D -- No --> F[Fetch 25 PENDING rows from DB\nFOR UPDATE SKIP LOCKED]
+    F --> G[Mark rows as WORKING in DB]
+    G --> H[Save batch to data/working.json]
+    E --> I[Process next profile]
+    H --> I
+    I --> J[Navigate to profile URL]
+    J --> K{Message button visible?}
+    K -- Yes --> L[Click Message button]
+    K -- No --> M[Click three-dots → Send Message]
+    L --> N[Type & send message]
+    M --> N
+    N --> O{Success?}
+    O -- Yes --> P[Update DB: SENT]
+    O -- No --> Q[Update DB: FAILED\nSave screenshot]
+    P --> R{More profiles?}
+    Q --> R
+    R -- Yes --> I
+    R -- No --> S[Delete working.json]
+    S --> T[Print summary & Exit]
 ```
 
 ---
 
-## 🌟 Solved Edge Cases & Key Features
-
-During production development, the automation has been hardened against the following common Instagram automation blockers and UI variations:
-
-### 1. 🔐 Saved Account / "Continue" UI Variation
-Instagram often remembers the last profile and presents a **"Continue as \<username>"** button instead of the username/password fields.
-- **Solution**: The script polls for both credentials inputs and "Continue" buttons. If a "Continue" button is detected, it clicks it, waits for the password input screen, and then logs in automatically.
-
-### 2. 🍪 Cookie banners & Overlay Blocks
-Global or regional network connections frequently cause Instagram to load cookie consent dialogs that block interaction with inputs.
-- **Solution**: The script automatically detects and clicks cookie dismissal selectors (e.g. `Allow all cookies`, `Decline optional cookies`, `Accept`) before trying to interact with the page.
-
-### 3. 📲 Terminal OTP / 2FA Interactivity
-When Instagram triggers a Two-Factor Authentication (2FA) checkpoint:
-- **Solution**: The automation pauses and prompts you directly in the terminal CLI: `Enter the Instagram OTP / Security Code sent to your device:`. Once entered, it automatically fills the OTP into the browser's verification input and submits it.
-
-### 4. 🚨 CAPTCHA & Security Check Sound Alarm
-If Instagram prompts a visual CAPTCHA or checkpoint page that requires manual sliding/selection:
-- **Solution**: The terminal prints a highly visible warning banner and triggers an **audio system bell beep (`\x07`)** to alert you. It rings 5 times immediately and continues to ring 3 times every 8 seconds for up to 5 minutes, allowing you to solve it manually in the opened browser window before resuming.
-
-### 5. 💬 Profile Options (Three-Dots) Message Fallback
-For profiles where a standard "Message" button is hidden or missing (such as private, business, or un-followed accounts):
-- **Solution**: The script checks if the direct "Message" button is visible. If it is absent, it locates the options button (three dots `...` next to the profile name), clicks it, and selects **"Send message"** from the popup menu.
-
-### 6. 🚫 Sidebar False Positives Exclusion
-Instagram's global navigation sidebar includes a direct message icon which has a selector footprint matching `[aria-label="Message"]`.
-- **Solution**: Restricts profile Message buttons strictly to `main` and `header` sections to prevent false clicks that would otherwise redirect the browser to the general inbox instead of opening the creator's DM composer.
-
-### 7. ⏭️ Persistent Account Deduplication
-To protect your reputation and avoid double-texting accounts across restarts:
-- **Solution**: Maintained inside [`data/processed_profiles.json`](data/processed_profiles.json). The script indexes every outreach by lowercase creator username. Before opening any profile, it checks the tracker; if the creator has already been messaged, it skips the profile immediately and proceeds to the next creator.
-
----
-
-## 📂 Directory Architecture
+## 📂 Project Structure
 
 ```text
 src/
 ├── config/
-│   ├── env.ts          # Dotenv configuration loading
-│   └── constants.ts    # Centralized delays and configs
+│   ├── env.ts              # Dotenv configuration loader
+│   └── constants.ts        # Centralized delays and timeouts
 │
 ├── auth/
-│   ├── login.ts        # Dynamic multi-path login & OTP handler
-│   ├── session.ts      # Active session check using cookies & DOM elements
-│   └── auth.types.ts   # Authentication TypeScript type interfaces
+│   ├── login.ts            # Multi-path login, OTP & CAPTCHA handler
+│   ├── session.ts          # Session detection via cookies & DOM
+│   └── auth.types.ts       # TypeScript auth interfaces
 │
 ├── instagram/
-│   ├── browser.ts      # Single persistent Playwright browser creation
-│   ├── profile.ts      # Profile navigation & cookie popups dismissal
-│   ├── messaging.ts    # DM composer fallback & focus handler
-│   ├── selectors.ts    # Centralized, robust Instagram DOM selectors
-│   └── instagram.types.ts
+│   ├── browser.ts          # Persistent Playwright browser setup
+│   ├── profile.ts          # Profile navigation & URL normalization
+│   ├── messaging.ts        # DM composer with fallback strategies
+│   ├── selectors.ts        # Centralized Instagram DOM selectors
+│   └── instagram.types.ts  # Instagram TypeScript interfaces
 │
 ├── automation/
-│   ├── orchestrator.ts # Browser lifecycle, loop sequential processing, and stats
-│   ├── workflow.ts     # Combined page navigation -> message composers -> DMs
-│   └── tracker.ts      # Processed profiles persistent JSON deduplication
+│   ├── orchestrator.ts     # Main loop: DB queue, batch processing, crash recovery
+│   ├── workflow.ts         # Profile → Message → Send combined workflow
+│   ├── tracker.ts          # PostgreSQL pool, fetchNextBatch, updateStatus
+│   └── retry.ts            # Retry utility
 │
 ├── input/
-│   ├── cli.ts          # Resolves CLI prompts & environment defaults
-│   ├── prompts.ts      # Inquirer CLI username / password prompt settings
-│   └── csv.ts          # RFC 4180 compliant messages.csv parser
+│   ├── cli.ts              # CLI credential prompts
+│   └── prompts.ts          # Inquirer prompt configuration
 │
 ├── logging/
-│   ├── logger.ts       # Structured logging to logs/automation.log
-│   └── screenshots.ts  # Captures screenshots to screenshots/ on failure
+│   ├── logger.ts           # Structured logging to logs/automation.log
+│   └── screenshots.ts      # Error screenshot capture
 │
-└── index.ts            # Entrypoint file
+└── index.ts                # Entrypoint
 ```
 
 ---
 
-## 🛠️ Getting Started
+## 🛠️ Setup & Installation
 
-### 1. Installation
-
-Clone the repository, navigate into the folder, and install the dependencies:
+### 1. Clone & Install
 
 ```bash
-cd instagram-automation
+git clone https://github.com/kunalsrivastava-dev/Insta-Outreach-Automation.git
+cd Insta-Outreach-Automation
 npm install
+npx playwright install chromium
 ```
 
-### 2. Configure Environment (`.env`)
+### 2. Configure Environment
 
-Create a `.env` file in the `instagram-automation` root directory:
+Copy the example file and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
 
 ```env
-INSTAGRAM_USERNAME=your_username
-INSTAGRAM_PASSWORD=your_password
+INSTAGRAM_USERNAME=your_instagram_username
+INSTAGRAM_PASSWORD=your_instagram_password
 HEADLESS=false
+DATABASE_URL=postgresql://username:password@host:5432/dbname?sslmode=require
 ```
-*Note: Keeping `HEADLESS=false` is recommended so you can view manual OTP verification and CAPTCHA solving screens.*
 
-### 3. Setup Target Messages (`data/messages.csv`)
+> 💡 Keep `HEADLESS=false` so you can handle OTP and CAPTCHA manually when needed.
 
-Create or update `data/messages.csv` following standard CSV format:
-```csv
-username,url,message
+### 3. Add Targets to the Database
+
+The table is **auto-created on first run**. Insert your target profiles directly into the `message_queue` table using any SQL client (e.g. Neon console, pgAdmin, DBeaver):
+
+```sql
+INSERT INTO message_queue (url, message, status)
+VALUES
+  ('https://www.instagram.com/targetprofile1/', 'Hi! Reaching out from Team Influight 🚀', 'PENDING'),
+  ('https://www.instagram.com/targetprofile2/', 'Hi! Reaching out from Team Influight 🚀', 'PENDING');
 ```
-**Example:**
-```csv
-username,url,message
-creator1,https://www.instagram.com/vinod_.kumar1230/,"Hi Vinod, I'd love to share something with you."
-creator2,https://www.instagram.com/kunalsrivastava658/,"Hey Kunal! I wanted to connect with you."
-```
-> 💡 *Note: The CSV parser is RFC 4180 compliant. You can include commas and quotation marks inside your message by enclosing the message in double quotes (`"..."`).*
 
-### 4. Running the Script
+> The `username` column is optional — the scraper will extract the handle from the URL automatically if not provided.
 
-Start the sequential batch automation:
+### 4. Run
 
 ```bash
 npm run dev
 ```
 
+Each worker run:
+1. Claims the first 25 `PENDING` rows (safe for concurrent workers)
+2. Sends the DM to each profile
+3. Updates the status to `SENT` or `FAILED` in real time
+4. Exits when the batch is complete
+
 ---
 
-## 📊 Logging & Reports
+## 🗄️ Database Schema
 
-- **Detailed log history**: All attempts, successes, and errors are appended to:
-  ```text
-  logs/automation.log
-  ```
-- **Error Screenshots**: If any profile action fails, the script captures the page state and saves it under:
-  ```text
-  screenshots/error-<username>-<timestamp>.png
-  ```
-- **Processed Log (Deduplication)**: Keeps track of all successfully processed accounts in:
-  ```text
-  data/processed_profiles.json
-  ```
+The `message_queue` table is auto-created on startup:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | SERIAL PK | Auto-increment primary key |
+| `username` | VARCHAR(255) | Optional display name |
+| `url` | TEXT UNIQUE | **Required.** Target Instagram profile URL |
+| `message` | TEXT | Message to send |
+| `status` | VARCHAR(50) | `PENDING` → `WORKING` → `SENT` / `FAILED` |
+| `worker_id` | VARCHAR(100) | ID of the worker currently processing this row |
+| `error` | TEXT | Error message if status is `FAILED` |
+| `timestamp` | TIMESTAMPTZ | Row creation time |
+| `updated_at` | TIMESTAMPTZ | Last status update time |
+
+---
+
+## 📊 Status Lifecycle
+
+```
+PENDING  →  WORKING  →  SENT
+                     ↘  FAILED
+```
+
+- **PENDING** — Inserted by you, waiting to be picked up
+- **WORKING** — Claimed by an active worker (locked)
+- **SENT** — Message delivered successfully
+- **FAILED** — Message failed; see `error` column for reason
+
+---
+
+## 📋 Logging & Debugging
+
+| Output | Location |
+|---|---|
+| Run log | `logs/automation.log` |
+| Error screenshots | `logs/error-<profile>-<timestamp>.png` |
+| Active batch checkpoint | `data/working.json` (auto-deleted after batch) |
+
+---
+
+## ⚠️ Edge Cases Handled
+
+| Scenario | Solution |
+|---|---|
+| Standard Message button hidden | Falls back to three-dots → Send message option |
+| Instagram 2FA / OTP triggered | Pauses and prompts for OTP in terminal |
+| CAPTCHA / security check | Rings system bell alarm, waits up to 5 minutes for manual solve |
+| Cookie consent banners | Auto-dismissed before any interaction |
+| Multiple workers running | `FOR UPDATE SKIP LOCKED` prevents double-processing |
+| Worker crash mid-batch | `data/working.json` checkpoint enables automatic resume |
+| URL missing `https://` prefix | Auto-normalized before navigation |
+
+---
+
+## 📦 Tech Stack
+
+- **Runtime**: Node.js + TypeScript (`tsx`)
+- **Browser Automation**: [Playwright](https://playwright.dev/)
+- **Database**: PostgreSQL (compatible with [Neon](https://neon.tech), Supabase, Render, Railway)
+- **DB Driver**: `pg` (node-postgres)
