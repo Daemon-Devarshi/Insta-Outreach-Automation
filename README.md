@@ -1,20 +1,41 @@
-# Insta Outreach Automation
+<div align="center">
+
+# 🤖 Instagram Outreach Automation
+
+**A production-ready, distributed Instagram DM automation engine**  
+Built with **Node.js · TypeScript · Playwright · PostgreSQL**
+
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Playwright](https://img.shields.io/badge/Playwright-1.62-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Compatible-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![License: ISC](https://img.shields.io/badge/License-ISC-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/ISC)
+
+---
+
+*Send personalized Instagram DMs at scale — with crash recovery, multi-worker safety, CAPTCHA handling, and real-time PostgreSQL tracking.*
+
+</div>
+
+---
 
 A production-ready, distributed Instagram DM automation tool built with **Node.js**, **TypeScript**, and **Playwright**. Uses a **PostgreSQL database queue** to coordinate multiple concurrent workers — each worker claims a batch of 25 pending profiles, sends messages one-by-one, and updates the database in real time.
 
 ---
 
-## ✨ Key Features
+## ✨ Features
 
-- 🗄️ **PostgreSQL Queue** — All targets and statuses live in the database. No CSVs, no local state files.
-- 👥 **Multi-Worker Safe** — Uses `FOR UPDATE SKIP LOCKED` transactions so multiple runners never process the same profile twice.
-- 🔄 **Crash Recovery** — Active batch is checkpointed to `data/working.json`. If the runner crashes, resuming picks up exactly where it left off.
-- 📡 **Real-time Status Updates** — Each profile is marked `SENT` or `FAILED` in the DB immediately after processing.
-- 🔁 **Fallback Message Button** — Handles profiles where the standard Message button is hidden (uses three-dots → Send message fallback).
-- 🔐 **2FA / OTP Support** — Pauses and prompts for OTP in the terminal during login challenges.
-- 🚨 **CAPTCHA Alert** — Rings audio system bell and waits up to 5 minutes for manual CAPTCHA solving.
-- 📸 **Error Screenshots** — Saves screenshots to `logs/` on failure for easy debugging.
-- 🔗 **URL-based Targeting** — Uniqueness is enforced on the profile URL. `username` is optional.
+| Feature | Description |
+|---|---|
+| 🗄️ **PostgreSQL Queue** | All targets and statuses live in the database — no CSVs, no local state files |
+| 👥 **Multi-Worker Safe** | `FOR UPDATE SKIP LOCKED` ensures multiple runners never process the same profile |
+| 🔄 **Crash Recovery** | Active batch checkpointed to `data/working.json` — resumes exactly where it left off |
+| 📡 **Real-time Updates** | Each profile is marked `SENT` or `FAILED` immediately after processing |
+| 🔁 **Fallback Messaging** | Handles hidden Message buttons via three-dots → Send message fallback |
+| 🔐 **2FA / OTP Support** | Pauses and prompts for OTP in the terminal during login challenges |
+| 🚨 **CAPTCHA Alert** | Rings system bell and waits up to 5 minutes for manual CAPTCHA solving |
+| 📸 **Error Screenshots** | Auto-saves screenshots to `logs/` on failure for easy debugging |
+| 🔗 **URL-based Targeting** | Uniqueness enforced on profile URL — `username` field is optional |
 
 ---
 
@@ -90,18 +111,28 @@ src/
 
 ## 🛠️ Setup & Installation
 
-### 1. Clone & Install
+### Prerequisites
+
+- **Node.js** v18 or higher
+- **PostgreSQL** database (local, [Neon](https://neon.tech), Supabase, Railway, or Render)
+- **Chromium** (installed automatically by Playwright)
+
+---
+
+### Step 1 — Clone & Install
 
 ```bash
-git clone https://github.com/kunalsrivastava-dev/Insta-Outreach-Automation.git
-cd Insta-Outreach-Automation
+git clone https://github.com/learnthusalearner/InstaGram-Outreach-Automation.git
+cd InstaGram-Outreach-Automation
 npm install
 npx playwright install chromium
 ```
 
-### 2. Configure Environment
+---
 
-Copy the example file and fill in your credentials:
+### Step 2 — Configure Environment
+
+Copy the example and fill in your credentials:
 
 ```bash
 cp .env.example .env
@@ -116,32 +147,40 @@ HEADLESS=false
 DATABASE_URL=postgresql://username:password@host:5432/dbname?sslmode=require
 ```
 
-> 💡 Keep `HEADLESS=false` so you can handle OTP and CAPTCHA manually when needed.
+> [!TIP]
+> Keep `HEADLESS=false` so you can manually handle OTP prompts and CAPTCHA challenges when Instagram triggers them.
 
-### 3. Add Targets to the Database
+---
 
-The table is **auto-created on first run**. Insert your target profiles directly into the `message_queue` table using any SQL client (e.g. Neon console, pgAdmin, DBeaver):
+### Step 3 — Seed Target Profiles
+
+The `message_queue` table is **auto-created on first run**. Insert your targets using any SQL client (Neon console, pgAdmin, DBeaver, etc.):
 
 ```sql
 INSERT INTO message_queue (url, message, status)
 VALUES
-  ('https://www.instagram.com/targetprofile1/', 'Hi! Reaching out from Team Influight 🚀', 'PENDING'),
-  ('https://www.instagram.com/targetprofile2/', 'Hi! Reaching out from Team Influight 🚀', 'PENDING');
+  ('https://www.instagram.com/targetprofile1/', 'Hey! Reaching out from our team 🚀', 'PENDING'),
+  ('https://www.instagram.com/targetprofile2/', 'Hey! Reaching out from our team 🚀', 'PENDING');
 ```
 
-> The `username` column is optional — the scraper will extract the handle from the URL automatically if not provided.
+> [!NOTE]
+> The `username` column is optional — the scraper extracts the handle from the URL automatically.
 
-### 4. Run
+---
+
+### Step 4 — Run
 
 ```bash
 npm run dev
 ```
 
 Each worker run:
-1. Claims the first 25 `PENDING` rows (safe for concurrent workers)
-2. Sends the DM to each profile
+1. Claims the first **25 `PENDING` rows** (concurrent-safe via `SKIP LOCKED`)
+2. Sends the DM to each profile one-by-one
 3. Updates the status to `SENT` or `FAILED` in real time
-4. Exits when the batch is complete
+4. Exits cleanly when the batch is complete
+
+To run multiple concurrent workers, simply open multiple terminals and run `npm run dev` in each.
 
 ---
 
@@ -149,31 +188,33 @@ Each worker run:
 
 The `message_queue` table is auto-created on startup:
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | SERIAL PK | Auto-increment primary key |
-| `username` | VARCHAR(255) | Optional display name |
-| `url` | TEXT UNIQUE | **Required.** Target Instagram profile URL |
-| `message` | TEXT | Message to send |
-| `status` | VARCHAR(50) | `PENDING` → `WORKING` → `SENT` / `FAILED` |
-| `worker_id` | VARCHAR(100) | ID of the worker currently processing this row |
-| `error` | TEXT | Error message if status is `FAILED` |
-| `timestamp` | TIMESTAMPTZ | Row creation time |
-| `updated_at` | TIMESTAMPTZ | Last status update time |
+| Column | Type | Default | Description |
+|---|---|---|---|
+| `id` | `SERIAL` | auto | Primary key |
+| `username` | `VARCHAR(255)` | `NULL` | Optional display name |
+| `url` | `TEXT UNIQUE` | — | **Required.** Target Instagram profile URL |
+| `message` | `TEXT` | — | The DM text to send |
+| `status` | `VARCHAR(50)` | `PENDING` | Current processing state |
+| `worker_id` | `VARCHAR(100)` | `NULL` | ID of the claiming worker |
+| `error` | `TEXT` | `NULL` | Error detail if `FAILED` |
+| `timestamp` | `TIMESTAMPTZ` | `now()` | Row creation time |
+| `updated_at` | `TIMESTAMPTZ` | `now()` | Last status update |
 
 ---
 
 ## 📊 Status Lifecycle
 
 ```
-PENDING  →  WORKING  →  SENT
-                     ↘  FAILED
+PENDING  ──▶  WORKING  ──▶  SENT ✅
+                       ╰──▶  FAILED ❌
 ```
 
-- **PENDING** — Inserted by you, waiting to be picked up
-- **WORKING** — Claimed by an active worker (locked)
-- **SENT** — Message delivered successfully
-- **FAILED** — Message failed; see `error` column for reason
+| Status | Meaning |
+|---|---|
+| `PENDING` | Inserted, waiting to be picked up |
+| `WORKING` | Claimed by an active worker (row-locked) |
+| `SENT` | DM delivered successfully |
+| `FAILED` | Delivery failed — see `error` column for reason |
 
 ---
 
@@ -181,9 +222,9 @@ PENDING  →  WORKING  →  SENT
 
 | Output | Location |
 |---|---|
-| Run log | `logs/automation.log` |
+| Full run log | `logs/automation.log` |
 | Error screenshots | `logs/error-<profile>-<timestamp>.png` |
-| Active batch checkpoint | `data/working.json` (auto-deleted after batch) |
+| Active batch checkpoint | `data/working.json` *(auto-deleted after batch)* |
 
 ---
 
@@ -201,9 +242,28 @@ PENDING  →  WORKING  →  SENT
 
 ---
 
-## 📦 Tech Stack
+## 🛠️ Tech Stack
 
-- **Runtime**: Node.js + TypeScript (`tsx`)
-- **Browser Automation**: [Playwright](https://playwright.dev/)
-- **Database**: PostgreSQL (compatible with [Neon](https://neon.tech), Supabase, Render, Railway)
-- **DB Driver**: `pg` (node-postgres)
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 18+ with TypeScript (`tsx`) |
+| Browser Automation | [Playwright](https://playwright.dev/) — Chromium |
+| Database | PostgreSQL — compatible with Neon, Supabase, Render, Railway |
+| DB Driver | [`pg`](https://node-postgres.com/) (node-postgres) |
+| CLI Prompts | [`inquirer`](https://github.com/SBoudrias/Inquirer.js) |
+| Environment | [`dotenv`](https://github.com/motdotla/dotenv) |
+
+---
+
+## ⚖️ Disclaimer
+
+> [!WARNING]
+> This tool interacts with Instagram through browser automation. Use it responsibly and in accordance with [Instagram's Terms of Service](https://help.instagram.com/581066165581870). Excessive or spam-like usage may result in account restrictions or bans. The authors take no responsibility for misuse.
+
+---
+
+<div align="center">
+
+Made with ❤️ for scalable outreach automation
+
+</div>
