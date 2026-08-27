@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { createBrowser } from "../instagram/browser";
 import { login } from "../auth/login";
 import { checkIsLoggedIn } from "../auth/session";
@@ -7,30 +5,31 @@ import { executeMessageWorkflow } from "./workflow";
 import { LoginCredentials } from "../auth/auth.types";
 import { logAutomation } from "../logging/logger";
 import { captureErrorScreenshot } from "../logging/screenshots";
-import { tracker, QueueRecord } from "./tracker";
-
-// Helper to extract a display profile name from the URL if the username column is empty
-function getProfileName(record: QueueRecord): string {
-  if (record.username && record.username.trim().length > 0) {
-    return record.username;
-  }
-  try {
-    const cleanUrl = record.url.trim().replace(/\/$/, "");
-    const parts = cleanUrl.split("/");
-    return parts[parts.length - 1] || "profile";
-  } catch {
-    return "profile";
-  }
-}
+import { tracker } from "./tracker";
+import { loadCsvData, MessageRecord } from "../input/csv";
 
 export async function runAutomation(credentials: LoginCredentials) {
+  // Initialize the tracker from data/seen.json
+  tracker.init();
+
+  // Load target records from data/*.csv
+  const records: MessageRecord[] = loadCsvData();
+
+  if (records.length === 0) {
+    console.log("⚠️ No target profiles found to process. Please provide a CSV file in the data/ folder.");
+    return;
+  }
+
+  console.log(`Loaded ${records.length} target profile(s) from CSV.\n`);
+
   const { context, page } = await createBrowser();
   console.log("✓ Browser started");
 
-  try {
-    // Initialize the tracker (connects to DB)
-    await tracker.init();
+  let successful = 0;
+  let skipped = 0;
+  let failed = 0;
 
+  try {
     console.log("Checking Instagram session...");
     await page.goto("https://www.instagram.com/", {
       waitUntil: "domcontentloaded",
@@ -47,137 +46,80 @@ export async function runAutomation(credentials: LoginCredentials) {
     }
 
     if (loggedIn) {
-      console.log("✓ Session authenticated");
+      console.log("✓ Session authenticated\n");
     } else {
-      console.log("⚠️ Could not verify session. Proceeding...");
+      console.log("⚠️ Could not verify session. Proceeding...\n");
     }
 
-    let successful = 0;
-    let failed = 0;
-
-    const workerId = `worker_${credentials.username.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}`;
-    console.log(`\n========================================`);
-    console.log(`   Database Queue Mode (Worker: ${workerId})`);
+    console.log(`========================================`);
+    console.log(`   Starting Instagram Outreach Loop`);
     console.log(`========================================\n`);
 
-    const batchSize = 25;
-    const WORKING_FILE = path.resolve("data/working.json");
-    let records: QueueRecord[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      const displayName = record.username || "profile";
 
-    // Check if there is an active batch in progress locally to resume from
-    if (fs.existsSync(WORKING_FILE)) {
+      // 1. Check if already seen in data/seen.json
+      if (tracker.isSeen(record.url, record.username)) {
+        console.log(`⏭️ [Profile ${i + 1}/${records.length}] ${displayName} (${record.url}) already in seen.json. Skipping.\n`);
+        skipped++;
+        continue;
+      }
+
+      console.log(`[Profile ${i + 1}/${records.length}] Processing ${displayName} (${record.url})...`);
+
       try {
-        const raw = fs.readFileSync(WORKING_FILE, "utf-8");
-        if (raw.trim().length > 0) {
-          records = JSON.parse(raw);
-          console.log(`⚠ Found unfinished batch in data/working.json. Resuming ${records.length} profile(s)...`);
-        }
-      } catch (err) {
-        console.warn("Could not read data/working.json, will fetch new batch.", err);
-      }
-    }
+        await executeMessageWorkflow(page, record.url, record.message);
+        console.log(`✓ Message sent to ${displayName}`);
 
-    // If no local batch exists or was empty, fetch a new batch from the database
-    if (records.length === 0) {
-      console.log(`Fetching batch of up to ${batchSize} pending profiles...`);
-      records = await tracker.fetchNextBatch(workerId, batchSize);
+        // 2. Immediately persist to data/seen.json on each message send
+        tracker.markSeen({
+          username: record.username,
+          url: record.url,
+          message: record.message,
+          status: "SENT",
+        });
+        console.log(`✓ Recorded in data/seen.json`);
 
-      if (records.length === 0) {
-        console.log("No pending messages in the database queue.");
-      } else {
-        // Cache the new batch locally in working.json
-        try {
-          const dir = path.dirname(WORKING_FILE);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-          fs.writeFileSync(WORKING_FILE, JSON.stringify(records, null, 2), "utf-8");
-          console.log(`Saved new batch of ${records.length} profiles to data/working.json.`);
-        } catch (err) {
-          console.error("Failed to save data/working.json:", err);
-        }
-      }
-    }
+        successful++;
 
-    if (records.length > 0) {
-      console.log(`Loaded ${records.length} profile(s) to process in this run.\n`);
+        logAutomation({
+          username: displayName,
+          url: record.url,
+          success: true,
+        });
 
-      for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        const profileName = getProfileName(record);
+        console.log("→ Continuing to next profile...\n");
+        await page.waitForTimeout(3000);
+      } catch (error: any) {
+        const errorReason = error?.message || String(error);
+        console.log(`✗ ${displayName} failed: ${errorReason}`);
 
-        // Skip if already processed in this batch (e.g., during resume after crash)
-        if (record.status === "SENT" || record.status === "FAILED") {
-          console.log(`⏭️ [Profile ${i + 1}/${records.length}] ${profileName} already processed in this batch (${record.status}). Skipping.\n`);
-          if (record.status === "SENT") {
-            successful++;
-          } else {
-            failed++;
-          }
-          continue;
-        }
+        const screenshot = await captureErrorScreenshot(page, displayName);
+        console.log(`→ Screenshot saved: ${screenshot}`);
+        console.log("→ Continuing to next profile...\n");
 
-        console.log(`[Profile ${i + 1}/${records.length}] ${profileName} (${record.url})`);
+        failed++;
 
-        try {
-          await executeMessageWorkflow(page, record.url, record.message);
-          console.log("✓ Message sent\n");
-
-          successful++;
-          record.status = "SENT";
-          await tracker.updateStatus(record.id, "SENT");
-
-          // Save updated batch state to local cache
-          fs.writeFileSync(WORKING_FILE, JSON.stringify(records, null, 2), "utf-8");
-
-          logAutomation({
-            username: profileName,
-            url: record.url,
-            success: true,
-          });
-        } catch (error: any) {
-          const errorReason = error?.message || String(error);
-          console.log(`✗ ${profileName} failed: ${errorReason}`);
-
-          const screenshot = await captureErrorScreenshot(page, profileName);
-          console.log(`→ Screenshot saved: ${screenshot}`);
-          console.log("→ Continuing to next profile...\n");
-
-          failed++;
-          record.status = "FAILED";
-          record.error = errorReason;
-          await tracker.updateStatus(record.id, "FAILED", errorReason);
-
-          // Save updated batch state to local cache
-          fs.writeFileSync(WORKING_FILE, JSON.stringify(records, null, 2), "utf-8");
-
-          logAutomation({
-            username: profileName,
-            url: record.url,
-            success: false,
-            error: errorReason,
-            screenshot,
-          });
-        }
-      }
-
-      // Clean up working.json when the entire batch is completed
-      try {
-        if (fs.existsSync(WORKING_FILE)) {
-          fs.unlinkSync(WORKING_FILE);
-          console.log("✓ Batch complete. Cleaned up data/working.json.");
-        }
-      } catch (err) {
-        console.error("Failed to delete data/working.json:", err);
+        logAutomation({
+          username: displayName,
+          url: record.url,
+          success: false,
+          error: errorReason,
+          screenshot,
+        });
       }
     }
 
     console.log(`========================================
-         PROCESS COMPLETE
+         AUTOMATION RUN COMPLETE
 ========================================
 
-Successful : ${successful}
-Failed     : ${failed}
+Total in CSV  : ${records.length}
+Sent (New)    : ${successful}
+Skipped (Seen): ${skipped}
+Failed        : ${failed}
+Total in seen : ${tracker.getSeenCount()}
 `);
 
   } finally {

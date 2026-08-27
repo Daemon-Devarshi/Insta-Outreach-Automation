@@ -11,17 +11,15 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Instagram direct message outreach automation with CSV batch input and real-time seen.json tracking",
   "dependencies": {
     "dotenv": "^17.4.2",
     "inquirer": "^9.2.14",
-    "pg": "^8.23.0",
     "playwright": "^1.62.1"
   },
   "devDependencies": {
     "@types/inquirer": "^9.0.7",
     "@types/node": "^26.2.0",
-    "@types/pg": "^8.23.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }

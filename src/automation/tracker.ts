@@ -1,198 +1,188 @@
-import pg from "pg";
-import { env } from "../config/env";
+import fs from "fs";
+import path from "path";
 
-const { Pool } = pg;
-
-export interface QueueRecord {
-  id: number;
+export interface SeenRecord {
   username?: string;
   url: string;
-  message: string;
-  status: "PENDING" | "WORKING" | "SENT" | "FAILED";
-  worker_id?: string;
+  message?: string;
+  status: "SENT" | "FAILED";
+  timestamp: string;
   error?: string;
 }
 
+/**
+ * Normalizes a URL for comparison / deduplication.
+ * Strips http/https differences, trailing slashes, www., query params.
+ */
+function normalizeUrlForComparison(url: string): string {
+  if (!url) return "";
+  let clean = url.trim().toLowerCase();
+  clean = clean.replace(/^https?:\/\//, "");
+  clean = clean.replace(/^www\./, "");
+  clean = clean.split("?")[0].split("#")[0];
+  clean = clean.replace(/\/+$/, "");
+  return clean;
+}
+
 export class ProfileTracker {
-  private pool: pg.Pool | null = null;
-  private useDb: boolean = false;
+  private filePath: string;
+  private records: SeenRecord[] = [];
+  private seenUrls: Set<string> = new Set();
+  private seenUsernames: Set<string> = new Set();
 
-  constructor() {
-    // Initial construction doesn't connect. Connection is handled in init()
+  constructor(filePath: string = path.resolve("data/seen.json")) {
+    this.filePath = filePath;
   }
 
-  public async init() {
-    if (!env.databaseUrl) {
-      throw new Error("DATABASE_URL is not configured. Please define it in your .env file.");
+  public init() {
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
 
-    try {
-      console.log("Connecting to PostgreSQL database...");
-      const sslConfig = env.databaseUrl.includes("localhost") || env.databaseUrl.includes("127.0.0.1")
-        ? false
-        : { rejectUnauthorized: false };
+    this.records = [];
+    this.seenUrls.clear();
+    this.seenUsernames.clear();
 
-      this.pool = new Pool({
-        connectionString: env.databaseUrl,
-        ssl: sslConfig,
-      });
+    if (fs.existsSync(this.filePath)) {
+      try {
+        const raw = fs.readFileSync(this.filePath, "utf-8").trim();
+        if (raw.length > 0) {
+          const parsed = JSON.parse(raw);
 
-      // Test connection
-      await this.pool.query("SELECT NOW()");
-
-      // Create table message_queue if not exists with UNIQUE on url, not username
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS message_queue (
-          id SERIAL PRIMARY KEY,
-          username VARCHAR(255),
-          url TEXT UNIQUE NOT NULL,
-          message TEXT NOT NULL,
-          status VARCHAR(50) DEFAULT 'PENDING' NOT NULL,
-          worker_id VARCHAR(100),
-          error TEXT,
-          timestamp TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        CREATE INDEX IF NOT EXISTS idx_message_queue_status ON message_queue(status);
-        CREATE INDEX IF NOT EXISTS idx_message_queue_url ON message_queue(url);
-      `);
-
-      this.useDb = true;
-      console.log("✓ Connected to PostgreSQL database successfully.");
-    } catch (err) {
-      console.error("✗ Failed to connect to PostgreSQL database:", err);
-      this.useDb = false;
-      throw err;
+          // Handle array of objects or strings
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (typeof item === "string") {
+                const normUrl = normalizeUrlForComparison(item);
+                if (normUrl) {
+                  this.seenUrls.add(normUrl);
+                  this.records.push({
+                    url: item,
+                    status: "SENT",
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+              } else if (item && typeof item === "object") {
+                const record = item as SeenRecord;
+                this.records.push(record);
+                if (record.url) {
+                  this.seenUrls.add(normalizeUrlForComparison(record.url));
+                }
+                if (record.username && record.username.trim().length > 0) {
+                  this.seenUsernames.add(record.username.trim().toLowerCase());
+                }
+              }
+            }
+          } else if (typeof parsed === "object" && parsed !== null) {
+            // Handle dictionary/map of { url: record }
+            for (const [key, val] of Object.entries(parsed)) {
+              const normUrl = normalizeUrlForComparison(key);
+              if (normUrl) {
+                this.seenUrls.add(normUrl);
+              }
+              if (val && typeof val === "object") {
+                this.records.push(val as SeenRecord);
+              } else {
+                this.records.push({
+                  url: key,
+                  status: "SENT",
+                  timestamp: new Date().toISOString(),
+                });
+              }
+            }
+          }
+        }
+        console.log(`✓ Loaded ${this.records.length} previously processed profile(s) from data/seen.json`);
+      } catch (err) {
+        console.warn("Could not parse data/seen.json, starting with fresh tracker state.", err);
+      }
+    } else {
+      // Create empty seen.json if it does not exist
+      this.saveToFile();
     }
   }
 
-  public isDbActive(): boolean {
-    return this.useDb;
-  }
-
-  public async isProcessed(url: string): Promise<boolean> {
-    if (!url || !this.pool) return false;
-    const cleanUrl = url.trim().toLowerCase();
-
-    try {
-      const res = await this.pool.query(
-        "SELECT 1 FROM message_queue WHERE LOWER(url) = $1 AND status = 'SENT' LIMIT 1",
-        [cleanUrl]
-      );
-      return res.rowCount !== null && res.rowCount > 0;
-    } catch (err) {
-      console.error(`Failed to query database for processed URL ${cleanUrl}:`, err);
-      return false;
+  /**
+   * Check if a profile URL or username has already been processed and saved to seen.json.
+   */
+  public isSeen(url: string, username?: string): boolean {
+    if (url) {
+      const norm = normalizeUrlForComparison(url);
+      if (this.seenUrls.has(norm)) {
+        return true;
+      }
     }
+    if (username && username.trim().length > 0) {
+      const cleanUser = username.trim().toLowerCase();
+      if (cleanUser !== "profile" && this.seenUsernames.has(cleanUser)) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  public async markProcessed(url: string, status: "SENT" | "FAILED", error?: string) {
-    if (!url || !this.pool) return;
-    const cleanUrl = url.trim();
+  /**
+   * Records a profile as seen and IMMEDIATELY updates data/seen.json on disk.
+   */
+  public markSeen(record: {
+    username?: string;
+    url: string;
+    message?: string;
+    status: "SENT" | "FAILED";
+    error?: string;
+  }) {
     const timestamp = new Date().toISOString();
+    const newRecord: SeenRecord = {
+      username: record.username || undefined,
+      url: record.url,
+      message: record.message || undefined,
+      status: record.status,
+      timestamp,
+      error: record.error || undefined,
+    };
 
-    try {
-      await this.pool.query(
-        `INSERT INTO message_queue (url, message, status, error, timestamp, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $5)
-         ON CONFLICT (url)
-         DO UPDATE SET status = EXCLUDED.status, error = EXCLUDED.error, updated_at = EXCLUDED.updated_at`,
-        [
-          cleanUrl,
-          "Status marked directly by tracker.",
-          status,
-          error || null,
-          timestamp,
-        ]
-      );
-    } catch (err) {
-      console.error(`Failed to save processed profile URL ${cleanUrl} to database:`, err);
+    // Update in-memory sets
+    if (record.url) {
+      this.seenUrls.add(normalizeUrlForComparison(record.url));
     }
+    if (record.username && record.username.trim().length > 0) {
+      this.seenUsernames.add(record.username.trim().toLowerCase());
+    }
+
+    // Update or append in records array
+    const existingIndex = this.records.findIndex(
+      (r) => normalizeUrlForComparison(r.url) === normalizeUrlForComparison(record.url)
+    );
+
+    if (existingIndex >= 0) {
+      this.records[existingIndex] = newRecord;
+    } else {
+      this.records.push(newRecord);
+    }
+
+    // Immediately persist to seen.json synchronously
+    this.saveToFile();
   }
 
-  public async addQueueItem(username: string | null, url: string, message: string): Promise<boolean> {
-    if (!this.pool) {
-      return false;
-    }
-
-    try {
-      const res = await this.pool.query(
-        `INSERT INTO message_queue (username, url, message, status, updated_at)
-         VALUES ($1, $2, $3, 'PENDING', NOW())
-         ON CONFLICT (url) DO NOTHING`,
-        [username ? username.trim() : null, url.trim(), message.trim()]
-      );
-      return res.rowCount !== null && res.rowCount > 0;
-    } catch (err) {
-      console.error(`Failed to add item to message queue for ${url}:`, err);
-      return false;
-    }
+  public getSeenCount(): number {
+    return this.records.length;
   }
 
-  public async fetchNextBatch(workerId: string, limit: number = 25): Promise<QueueRecord[]> {
-    if (!this.pool) {
-      return [];
-    }
-
-    const client = await this.pool.connect();
+  private saveToFile() {
     try {
-      await client.query("BEGIN");
-
-      const fetchRes = await client.query(
-        `WITH next_batch AS (
-           SELECT id FROM message_queue
-           WHERE status = 'PENDING'
-           ORDER BY id ASC
-           LIMIT $1
-           FOR UPDATE SKIP LOCKED
-         )
-         UPDATE message_queue
-         SET status = 'WORKING', worker_id = $2, updated_at = NOW()
-         WHERE id IN (SELECT id FROM next_batch)
-         RETURNING id, username, url, message, status, worker_id, error`,
-        [limit, workerId]
-      );
-
-      await client.query("COMMIT");
-      return fetchRes.rows;
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.filePath, JSON.stringify(this.records, null, 2), "utf-8");
     } catch (err) {
-      await client.query("ROLLBACK");
-      console.error(`Error fetching next batch for worker ${workerId}:`, err);
-      return [];
-    } finally {
-      client.release();
-    }
-  }
-
-  public async updateStatus(id: number, status: "SENT" | "FAILED", error?: string) {
-    if (!this.pool) {
-      return;
-    }
-
-    try {
-      await this.pool.query(
-        `UPDATE message_queue
-         SET status = $1, error = $2, updated_at = NOW()
-         WHERE id = $3`,
-        [status, error || null, id]
-      );
-    } catch (err) {
-      console.error(`Failed to update status for queue item ${id} to ${status}:`, err);
+      console.error(`Failed to write to ${this.filePath}:`, err);
     }
   }
 
   public async close() {
-    if (this.pool) {
-      try {
-        await this.pool.end();
-        console.log("Closed PostgreSQL connection pool.");
-      } catch (err) {
-        console.error("Error closing PostgreSQL pool:", err);
-      } finally {
-        this.pool = null;
-        this.useDb = false;
-      }
-    }
+    // Synchronous write already done on every update
   }
 }
 

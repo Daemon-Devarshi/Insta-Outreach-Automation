@@ -2,70 +2,61 @@
 
 # 🤖 Instagram Outreach Automation
 
-**A production-ready, distributed Instagram DM automation engine**  
-Built with **Node.js · TypeScript · Playwright · PostgreSQL**
+**A production-ready Instagram DM outreach automation engine**  
+Built with **Node.js · TypeScript · Playwright · CSV Data Loading · Real-Time Tracking**
 
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-1.62-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Compatible-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License: ISC](https://img.shields.io/badge/License-ISC-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/ISC)
 
 ---
 
-*Send personalized Instagram DMs at scale — with crash recovery, multi-worker safety, CAPTCHA handling, and real-time PostgreSQL tracking.*
+*Send personalized Instagram direct messages from CSV data with automatic deduplication, real-time `seen.json` checkpointing after every single message, and robust CAPTCHA/2FA handling.*
 
 </div>
 
 ---
 
-A production-ready, distributed Instagram DM automation tool built with **Node.js**, **TypeScript**, and **Playwright**. Uses a **PostgreSQL database queue** to coordinate multiple concurrent workers — each worker claims a batch of 25 pending profiles, sends messages one-by-one, and updates the database in real time.
-
----
-
-## ✨ Features
+## ✨ Highlights & Features
 
 | Feature | Description |
 |---|---|
-| 🗄️ **PostgreSQL Queue** | All targets and statuses live in the database — no CSVs, no local state files |
-| 👥 **Multi-Worker Safe** | `FOR UPDATE SKIP LOCKED` ensures multiple runners never process the same profile |
-| 🔄 **Crash Recovery** | Active batch checkpointed to `data/working.json` — resumes exactly where it left off |
-| 📡 **Real-time Updates** | Each profile is marked `SENT` or `FAILED` immediately after processing |
-| 🔁 **Fallback Messaging** | Handles hidden Message buttons via three-dots → Send message fallback |
-| 🔐 **2FA / OTP Support** | Pauses and prompts for OTP in the terminal during login challenges |
-| 🚨 **CAPTCHA Alert** | Rings system bell and waits up to 5 minutes for manual CAPTCHA solving |
-| 📸 **Error Screenshots** | Auto-saves screenshots to `logs/` on failure for easy debugging |
-| 🔗 **URL-based Targeting** | Uniqueness enforced on profile URL — `username` field is optional |
+| 📄 **CSV Data Loading** | Automatically reads target profiles and customized messages from `data/messages.csv` (or any `.csv` file in `data/`). |
+| ⚡ **Instant `seen.json` Updates** | `data/seen.json` is updated and flushed to disk **immediately after every message is sent** — no lost progress if the run is stopped or interrupted. |
+| ⏭️ **Automatic Deduplication** | Profiles already present in `data/seen.json` are skipped automatically before opening the browser page. |
+| 🔁 **Fallback Messaging** | Automatically detects and clicks the three-dots options menu if the main "Message" button is hidden. |
+| 🔐 **2FA / OTP Support** | Detects login challenges and prompts for security codes directly inside the terminal. |
+| 🚨 **CAPTCHA Alerts** | Triggers system bell alerts and allows up to 5 minutes for manual verification resolution. |
+| 📸 **Error Screenshots** | Captures and saves full-page screenshot snapshots on failures to `screenshots/` for quick debugging. |
+| 🔗 **Smart URL & Username Parsing** | Normalizes URLs (e.g., adding `https://` / slashes) and infers usernames from URLs if omitted. |
 
 ---
 
-## 🗺️ Architecture Flow
+## 🗺️ Workflow Architecture
 
 ```mermaid
 graph TD
-    A[Start: npm run dev] --> B[Connect to PostgreSQL]
-    B --> C[Login to Instagram]
-    C --> D{data/working.json exists?}
-    D -- Yes --> E[Resume existing batch]
-    D -- No --> F[Fetch 25 PENDING rows from DB\nFOR UPDATE SKIP LOCKED]
-    F --> G[Mark rows as WORKING in DB]
-    G --> H[Save batch to data/working.json]
-    E --> I[Process next profile]
-    H --> I
-    I --> J[Navigate to profile URL]
-    J --> K{Message button visible?}
-    K -- Yes --> L[Click Message button]
-    K -- No --> M[Click three-dots → Send Message]
-    L --> N[Type & send message]
-    M --> N
-    N --> O{Success?}
-    O -- Yes --> P[Update DB: SENT]
-    O -- No --> Q[Update DB: FAILED\nSave screenshot]
-    P --> R{More profiles?}
-    Q --> R
-    R -- Yes --> I
-    R -- No --> S[Delete working.json]
-    S --> T[Print summary & Exit]
+    A[Start: npm run dev] --> B[Initialize Seen Tracker\nload data/seen.json]
+    B --> C[Load Target Profiles\nfrom data/*.csv]
+    C --> D[Launch Browser & Authenticate]
+    D --> E[For each profile in CSV]
+    E --> F{Already in seen.json?}
+    F -- Yes --> G[Log Skip & Proceed to Next]
+    F -- No --> H[Navigate to Profile URL]
+    H --> I{Message button visible?}
+    I -- Yes --> J[Click Message Button]
+    I -- No --> K[Click Three-Dots → Send Message]
+    J --> L[Type Message & Send DM]
+    K --> L
+    L --> M{Send Successful?}
+    M -- Yes --> N[Immediately update data/seen.json\nLog Success]
+    M -- No --> O[Capture Error Screenshot\nLog Failure]
+    N --> P{More Profiles?}
+    O --> P
+    G --> P
+    P -- Yes --> E
+    P -- No --> Q[Print Summary & Close Browser]
 ```
 
 ---
@@ -75,12 +66,12 @@ graph TD
 ```text
 src/
 ├── config/
-│   ├── env.ts              # Dotenv configuration loader
-│   └── constants.ts        # Centralized delays and timeouts
+│   ├── env.ts              # Environment configuration loader
+│   └── constants.ts        # Delays, timeouts, and constants
 │
 ├── auth/
-│   ├── login.ts            # Multi-path login, OTP & CAPTCHA handler
-│   ├── session.ts          # Session detection via cookies & DOM
+│   ├── login.ts            # Multi-scenario login, OTP & CAPTCHA handler
+│   ├── session.ts          # Session detection via cookies & DOM elements
 │   └── auth.types.ts       # TypeScript auth interfaces
 │
 ├── instagram/
@@ -91,20 +82,21 @@ src/
 │   └── instagram.types.ts  # Instagram TypeScript interfaces
 │
 ├── automation/
-│   ├── orchestrator.ts     # Main loop: DB queue, batch processing, crash recovery
-│   ├── workflow.ts         # Profile → Message → Send combined workflow
-│   ├── tracker.ts          # PostgreSQL pool, fetchNextBatch, updateStatus
-│   └── retry.ts            # Retry utility
+│   ├── orchestrator.ts     # Main outreach loop & real-time execution
+│   ├── workflow.ts         # Profile → Composer → Send combined workflow
+│   ├── tracker.ts          # Real-time seen.json persistence & deduplication
+│   └── retry.ts            # Retry utilities
 │
 ├── input/
-│   ├── cli.ts              # CLI credential prompts
-│   └── prompts.ts          # Inquirer prompt configuration
+│   ├── cli.ts              # CLI credential resolver (.env vs prompt)
+│   ├── prompts.ts          # Inquirer prompt configurations
+│   └── csv.ts              # RFC 4180 compliant CSV parser
 │
 ├── logging/
 │   ├── logger.ts           # Structured logging to logs/automation.log
-│   └── screenshots.ts      # Error screenshot capture
+│   └── screenshots.ts      # Error screenshot capture to screenshots/
 │
-└── index.ts                # Entrypoint
+└── index.ts                # Application entrypoint
 ```
 
 ---
@@ -114,8 +106,7 @@ src/
 ### Prerequisites
 
 - **Node.js** v18 or higher
-- **PostgreSQL** database (local, [Neon](https://neon.tech), Supabase, Railway, or Render)
-- **Chromium** (installed automatically by Playwright)
+- **Chromium** (installed automatically via Playwright)
 
 ---
 
@@ -130,101 +121,89 @@ npx playwright install chromium
 
 ---
 
-### Step 2 — Configure Environment
+### Step 2 — Configure Environment (`.env`)
 
-Copy the example and fill in your credentials:
+Copy the example configuration file:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` with your Instagram credentials:
 
 ```env
 INSTAGRAM_USERNAME=your_instagram_username
 INSTAGRAM_PASSWORD=your_instagram_password
 HEADLESS=false
-DATABASE_URL=postgresql://username:password@host:5432/dbname?sslmode=require
 ```
 
 > [!TIP]
-> Keep `HEADLESS=false` so you can manually handle OTP prompts and CAPTCHA challenges when Instagram triggers them.
+> Keeping `HEADLESS=false` is recommended so you can view browser actions and manually resolve any 2FA/OTP prompts or CAPTCHA challenges when required.
 
 ---
 
-### Step 3 — Seed Target Profiles
+### Step 3 — Add Target Profiles in `data/messages.csv`
 
-The `message_queue` table is **auto-created on first run**. Insert your targets using any SQL client (Neon console, pgAdmin, DBeaver, etc.):
+Create or edit `data/messages.csv` with standard CSV columns:
 
-```sql
-INSERT INTO message_queue (url, message, status)
-VALUES
-  ('https://www.instagram.com/targetprofile1/', 'Hey! Reaching out from our team 🚀', 'PENDING'),
-  ('https://www.instagram.com/targetprofile2/', 'Hey! Reaching out from our team 🚀', 'PENDING');
+```csv
+username,url,message
+creator1,https://www.instagram.com/example_user1/,"Hi there! We would love to collaborate with you."
+creator2,https://www.instagram.com/example_user2/,"Hey! Loved your recent content and wanted to connect."
 ```
 
 > [!NOTE]
-> The `username` column is optional — the scraper extracts the handle from the URL automatically.
+> - The parser is fully **RFC 4180 compliant**: you can include commas, quotes (`""`), and multiline strings inside double quotes.
+> - The `username` column is optional — if empty, the handle will be extracted automatically from the URL.
 
 ---
 
-### Step 4 — Run
+### Step 4 — Run the Automation
+
+Start the outreach automation:
 
 ```bash
 npm run dev
 ```
 
-Each worker run:
-1. Claims the first **25 `PENDING` rows** (concurrent-safe via `SKIP LOCKED`)
-2. Sends the DM to each profile one-by-one
-3. Updates the status to `SENT` or `FAILED` in real time
-4. Exits cleanly when the batch is complete
-
-To run multiple concurrent workers, simply open multiple terminals and run `npm run dev` in each.
-
----
-
-## 🗄️ Database Schema
-
-The `message_queue` table is auto-created on startup:
-
-| Column | Type | Default | Description |
-|---|---|---|---|
-| `id` | `SERIAL` | auto | Primary key |
-| `username` | `VARCHAR(255)` | `NULL` | Optional display name |
-| `url` | `TEXT UNIQUE` | — | **Required.** Target Instagram profile URL |
-| `message` | `TEXT` | — | The DM text to send |
-| `status` | `VARCHAR(50)` | `PENDING` | Current processing state |
-| `worker_id` | `VARCHAR(100)` | `NULL` | ID of the claiming worker |
-| `error` | `TEXT` | `NULL` | Error detail if `FAILED` |
-| `timestamp` | `TIMESTAMPTZ` | `now()` | Row creation time |
-| `updated_at` | `TIMESTAMPTZ` | `now()` | Last status update |
+The script will:
+1. Load `data/seen.json` to identify previously messaged profiles.
+2. Read your target list from `data/*.csv`.
+3. Check Instagram session and log in if needed.
+4. Skip profiles that are already in `data/seen.json`.
+5. Send DMs one-by-one, **updating `data/seen.json` immediately after each successful message**.
+6. Print a final summary when complete.
 
 ---
 
-## 📊 Status Lifecycle
+## 📊 Deduplication & Real-Time Tracking (`seen.json`)
 
-```
-PENDING  ──▶  WORKING  ──▶  SENT ✅
-                       ╰──▶  FAILED ❌
+All sent messages are saved to `data/seen.json` in real time:
+
+```json
+[
+  {
+    "username": "creator1",
+    "url": "https://www.instagram.com/example_user1/",
+    "message": "Hi there! We would love to collaborate with you.",
+    "status": "SENT",
+    "timestamp": "2026-08-27T06:45:00.000Z"
+  }
+]
 ```
 
-| Status | Meaning |
-|---|---|
-| `PENDING` | Inserted, waiting to be picked up |
-| `WORKING` | Claimed by an active worker (row-locked) |
-| `SENT` | DM delivered successfully |
-| `FAILED` | Delivery failed — see `error` column for reason |
+- If the script stops, crashes, or is closed mid-run, `data/seen.json` is already saved up to the last sent message.
+- Re-running the script will automatically skip all accounts recorded in `seen.json`.
 
 ---
 
 ## 📋 Logging & Debugging
 
-| Output | Location |
-|---|---|
-| Full run log | `logs/automation.log` |
-| Error screenshots | `logs/error-<profile>-<timestamp>.png` |
-| Active batch checkpoint | `data/working.json` *(auto-deleted after batch)* |
+| Output | Location | Description |
+|---|---|---|
+| Seen History | `data/seen.json` | JSON tracker updated immediately on every send |
+| Execution Log | `logs/automation.log` | Timestamps, status, username, URL, and errors |
+| Error Screenshots | `screenshots/error-<profile>-<timestamp>.png` | Full-page snapshots captured on failures |
 
 ---
 
@@ -232,38 +211,16 @@ PENDING  ──▶  WORKING  ──▶  SENT ✅
 
 | Scenario | Solution |
 |---|---|
-| Standard Message button hidden | Falls back to three-dots → Send message option |
-| Instagram 2FA / OTP triggered | Pauses and prompts for OTP in terminal |
-| CAPTCHA / security check | Rings system bell alarm, waits up to 5 minutes for manual solve |
-| Cookie consent banners | Auto-dismissed before any interaction |
-| Multiple workers running | `FOR UPDATE SKIP LOCKED` prevents double-processing |
-| Worker crash mid-batch | `data/working.json` checkpoint enables automatic resume |
-| URL missing `https://` prefix | Auto-normalized before navigation |
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 18+ with TypeScript (`tsx`) |
-| Browser Automation | [Playwright](https://playwright.dev/) — Chromium |
-| Database | PostgreSQL — compatible with Neon, Supabase, Render, Railway |
-| DB Driver | [`pg`](https://node-postgres.com/) (node-postgres) |
-| CLI Prompts | [`inquirer`](https://github.com/SBoudrias/Inquirer.js) |
-| Environment | [`dotenv`](https://github.com/motdotla/dotenv) |
+| **Hidden Message button** | Automatically falls back to clicking three-dots options → "Send message". |
+| **Instagram 2FA / OTP** | Detects verification screens and prompts for the code in your terminal. |
+| **CAPTCHA / Security check** | Rings system alert beeps and allows up to 5 minutes for manual browser completion. |
+| **Cookie banners & popups** | Automatically dismissed before navigating and interacting. |
+| **Interrupted / Cancelled runs** | `seen.json` is updated after each individual message so no progress is ever lost. |
+| **Malformed URLs** | Automatically normalizes missing `https://` protocols and slashes. |
 
 ---
 
 ## ⚖️ Disclaimer
 
 > [!WARNING]
-> This tool interacts with Instagram through browser automation. Use it responsibly and in accordance with [Instagram's Terms of Service](https://help.instagram.com/581066165581870). Excessive or spam-like usage may result in account restrictions or bans. The authors take no responsibility for misuse.
-
----
-
-<div align="center">
-
-Made with ❤️ for scalable outreach automation
-
-</div>
+> This tool interacts with Instagram through browser automation. Use it responsibly and in accordance with [Instagram's Terms of Service](https://help.instagram.com/581066165581870). Excessive or rapid messaging may trigger account rate limits or temporary restrictions.

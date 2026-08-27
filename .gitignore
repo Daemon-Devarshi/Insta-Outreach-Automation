@@ -5,3 +5,8 @@ logs/
 screenshots/
 dist/
 *.log
+
+# Data files (keep template example)
+data/*.csv
+data/seen.json
+!data/messages.csv.example
